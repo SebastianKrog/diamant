@@ -40,19 +40,59 @@ class TournamentDB:
 
     def write_game(self, players):
         if len(players) < 1:
-            return False
+            return True
 
         if type(players[0]) is not dict:
             return False
 
         cur = self.conn.cursor()
-        game_id = cur.execute("select max(game_id) from games_players").fetchone()[0] or 0
+        create_game_id = False
+        game_id = 0
+        if "game_id" not in players[0]:
+            create_game_id = True
+            game_id = cur.execute("select max(game_id) from games_players").fetchone()[0] or 0
 
         ids, db_names = zip(*self.get_players())
         for player in players:
             player["player_id"] = ids[db_names.index(player["name"])]
-            player["game_id"] = game_id + 1
+            if create_game_id:
+                player["game_id"] = game_id + 1
 
         cur.executemany("""insert into games_players (game_id, player_id, win, chest, deaths, gems_lost, relics) 
             values (:game_id, :player_id, :win, :chest, :deaths, :gems_lost, :relics)""", players)
         self.conn.commit()
+
+        return True
+
+    def write_games(self, games):
+        if len(games) < 1:
+            return True
+
+        if type(games[0]) is not list:
+            return False
+
+        if type(games[0][0]) is not dict:
+            return False
+
+        cur = self.conn.cursor()
+        create_game_id = False
+        game_id = 0
+        if "game_id" not in games[0][0]:
+            create_game_id = True
+            game_id = cur.execute("select max(game_id) from games_players").fetchone()[0] or 0
+
+        ids, db_names = zip(*self.get_players())
+        players = []
+        for game in games:
+            game_id += 1
+            for player in game:
+                player["player_id"] = ids[db_names.index(player["name"])]
+                if create_game_id:
+                    player["game_id"] = game_id
+                players.append(player)
+
+        cur.executemany("""insert into games_players (game_id, player_id, win, chest, deaths, gems_lost, relics) 
+                    values (:game_id, :player_id, :win, :chest, :deaths, :gems_lost, :relics)""", players)
+        self.conn.commit()
+
+        return True

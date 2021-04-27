@@ -6,11 +6,20 @@ import re
 import json
 from os import path
 from TournamentDB import TournamentDB
+from multiprocessing import Pool
+
+
+def multiprocess_tournament(name, player_names, player_n, directory, game_ids):
+    players = [gen_player_from_name(name) for name in player_names]
+    t = Tournament(name=name, player_pool=players, player_n=player_n, directory=directory)
+    t.hold_tournament(n=game_ids, supply_game_id=True)
+    return True
 
 
 class Tournament:
     def __init__(self, name, player_pool=None, player_n=8, directory="tournaments/"):
         self.player_pool = player_pool or []
+
         self.results = []
         self.players_games_played = [0]*len(player_pool)
         self.players_games_won = [0]*len(player_pool)
@@ -23,29 +32,32 @@ class Tournament:
         players, player_names = zip(*self.player_pool)
         self.db.write_players(player_names)
 
-    def add_players(self, players):
-        if type(players) == list:
-            self.player_pool += players
-            self.players_games_played += [0]*len(players)
-            self.players_games_won += [0] * len(players)
-        else:
-            self.player_pool.append(players)
-            self.players_games_played.append(0)
-            self.players_games_won.append(0)
+    # def add_players(self, players):
+    #     if type(players) == list:
+    #         self.player_pool += players
+    #         self.players_games_played += [0]*len(players)
+    #         self.players_games_won += [0] * len(players)
+    #     else:
+    #         self.player_pool.append(players)
+    #         self.players_games_played.append(0)
+    #         self.players_games_won.append(0)
 
-    def retire_players(self, player_names):
-        players, old_player_names = zip(*self.player_pool)
-        if type(player_names) is not list:
-            player_names = [player_names]
-        for player in player_names:
-            self.retired_players.append(player)
-            index = old_player_names.index(player)
-            self.player_pool.pop(index)
-            self.players_games_played.pop(index)
-            self.players_games_won.pop(index)
+    # def retire_players(self, player_names):
+    #     players, old_player_names = zip(*self.player_pool)
+    #     if type(player_names) is not list:
+    #         player_names = [player_names]
+    #     for player in player_names:
+    #         self.retired_players.append(player)
+    #         index = old_player_names.index(player)
+    #         self.player_pool.pop(index)
+    #         self.players_games_played.pop(index)
+    #         self.players_games_won.pop(index)
 
-    def db_save(self, result):
+    def db_save_game(self, result):
         self.db.write_game(result['players'])
+
+    def db_save_games(self, games):
+        self.db.write_games(games)
 
     def save(self):
         players, player_names = zip(*self.player_pool)
@@ -78,7 +90,7 @@ class Tournament:
                     player_names = d['player_names']
                     self.player_pool = [gen_player_from_name(name) for name in player_names]
 
-    def play_game(self):
+    def play_game(self, game_id=None, save_db=True):
         # Find a player with fewest plays:
         player_0 = self.player_pool[self.players_games_played.index(min(self.players_games_played))]
 
@@ -92,10 +104,11 @@ class Tournament:
         for player in players:
             self.players_games_played[self.player_pool.index(player)] += 1
 
-        result = Diamant(players).play_game()
+        result = Diamant(players, game_id=game_id).play_game()
         #self.results.append(result)
 
-        self.db_save(result)
+        if save_db:
+            self.db_save_game(result)
 
         winners = result["winner"]
         if type(winners) is not list:
@@ -106,9 +119,26 @@ class Tournament:
             self.players_games_won[winner_index] += 1
         self.games_played += 1
 
-    def hold_tournament(self, n=1000):
-        for i in range(n):
-            self.play_game()
+        return result
+
+    def hold_tournament(self, n=1000, save_db=True, offload_interval=10000, supply_game_id=False):
+        games = []
+
+        if type(n) is int:
+            n = range(n)
+
+        game_id = None
+
+        for i in n:
+            if supply_game_id:
+                game_id = i
+            result = self.play_game(game_id=game_id, save_db=False)
+            games.append(result["players"])
+            if save_db and ((i % offload_interval) == 0):
+                self.db_save_games(games)
+                games = []
+        if save_db:
+            self.db_save_games(games)
 
     def calc_winrates(self):
         for game in self.results:
@@ -123,8 +153,10 @@ class Diamant:
     relics = ".,:;!"  # 5 7 8 10 12
     relic_values = [5, 7, 8, 10, 12]
 
-    def __init__(self, players):
+    def __init__(self, players, game_id=None):
         players, names = zip(*players)
+
+        self.game_id = game_id
 
         self.rnd = 0
         self.trn = 0
@@ -400,6 +432,9 @@ class Diamant:
             "relics": relics
         }
 
+        if self.game_id:
+            players["game_id"] = [self.game_id]*self.players_n
+
         tie = self.players_chest.count(winner_amount) > 1
         if tie:
             tie_pos = [i for i, j in enumerate(self.players_chest) if j == winner_amount]
@@ -500,23 +535,54 @@ def relic_gen(p=1, fallback=random_gen, *args):
     return relic, "relic_%.2f_%s" % (p, fallback_name)
 
 
-dict_name_to_gen = {
-        re.compile(r"^relic_(\d\.\d\d)_(.+)"): relic_gen,
-        re.compile(r"^traps_(\d+)"): traps_gen,
-        re.compile(r"^tiles_(\d+)"): tiles_gen,
-        re.compile(r"^gems_(\d+)"): gems_gen,
-        re.compile(r"^random_(\d\.\d\d)"): random_gen
+def gen_player_from_name(player_name):
+    dict_name_to_gen = {
+        r"^relic_(\d\.\d\d)_(.+)": relic_gen,
+        r"^traps_(\d+)": traps_gen,
+        r"^tiles_(\d+)": tiles_gen,
+        r"^gems_(\d+)": gems_gen,
+        r"^random_(\d\.\d\d)": random_gen
     }
 
-
-def gen_player_from_name(name):
-    for regex, func in dict_name_to_gen:
-        match = regex.match(name)
+    for regex in dict_name_to_gen:
+        match = re.match(regex, player_name)
         if match:
-            return func(*match.groups())
+            return dict_name_to_gen[regex](*match.groups())
     raise ValueError('Player could not be generated from name')
+
+
+def async_test(i):
+    print(i)
 
 
 if __name__ == '__main__':
     #diamant = Diamant([relic_gen(p) for p in numpy.linspace(0.2, 1, num=8)])
-    t = Tournament("test", [gems_gen(i) for i in numpy.linspace(1, 60, num=60)])
+
+    with Pool(6) as pool:
+        pf, player_ns = zip(*[gems_gen(i) for i in numpy.linspace(1, 60, num=60)])
+        games_per_pool = 100000
+
+        #multiple_results = [pool.apply_async(multiprocess_tournament, ("mp_test", player_names, 8, "tournaments/", range(games_per_pool*i, games_per_pool*(i+1)))) for i in range(4)]
+        multiple_res = []
+        for i in range(12):
+            res = pool.apply_async(multiprocess_tournament, ("mp_test", player_ns, 8, "tournaments/", range(games_per_pool*i, games_per_pool*(i+1))))
+            multiple_res.append(res)
+
+        pool.close()
+        pool.join()
+        print([res.get() for res in multiple_res])
+
+# Plan:
+# Create a tournament structure where algorithms battle:
+# 20 permanent base algorithms among the best or most prominent std. ones
+# 20 best performing among candidates
+# 10 clones of previous best performing
+# 10 newly created algorithms
+# Each iteration, clones that do better than their originals (significantly so) replace their counterparts
+# New algorithms get a spot in the best performing if they outperform these
+# The overall n best algorithm gets a permanent spot in the next level tournament
+# Tournaments are held until 30 best algorithms are collected
+# Then an a new tournaments are held where these 30 algorithms battle their clones
+# If the clones outperform, they replace their original
+# This continues until parameters have been optimized
+
