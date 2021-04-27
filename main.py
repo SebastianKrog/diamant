@@ -565,7 +565,7 @@ if __name__ == '__main__':
         #multiple_results = [pool.apply_async(multiprocess_tournament, ("mp_test", player_names, 8, "tournaments/", range(games_per_pool*i, games_per_pool*(i+1)))) for i in range(4)]
         multiple_res = []
         for i in range(12):
-            res = pool.apply_async(multiprocess_tournament, ("mp_test", player_ns, 8, "tournaments/", range(games_per_pool*i, games_per_pool*(i+1))))
+            res = pool.apply_async(multiprocess_tournament, ("mp_test", player_ns, 8, "tournaments/", range(1+games_per_pool*i, 1+games_per_pool*(i+1))))
             multiple_res.append(res)
 
         pool.close()
