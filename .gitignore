@@ -1,3 +1,5 @@
 *.json
 .Rproj.user/
 .idea/
+*.db
+*.db-journal

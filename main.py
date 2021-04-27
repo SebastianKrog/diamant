@@ -5,10 +5,11 @@ import re
 # import sqlite3
 import json
 from os import path
+from TournamentDB import TournamentDB
 
 
 class Tournament:
-    def __init__(self, name, player_n=8, player_pool=None, directory=""):
+    def __init__(self, name, player_pool=None, player_n=8, directory="tournaments/"):
         self.player_pool = player_pool or []
         self.results = []
         self.players_games_played = [0]*len(player_pool)
@@ -17,7 +18,10 @@ class Tournament:
         self.games_played = 0
         self.name = name
         self.retired_players = []
-        self.directory = directory
+
+        self.db = TournamentDB(directory+self.name+".db")
+        players, player_names = zip(*self.player_pool)
+        self.db.write_players(player_names)
 
     def add_players(self, players):
         if type(players) == list:
@@ -39,6 +43,9 @@ class Tournament:
             self.player_pool.pop(index)
             self.players_games_played.pop(index)
             self.players_games_won.pop(index)
+
+    def db_save(self, result):
+        self.db.write_game(result['players'])
 
     def save(self):
         players, player_names = zip(*self.player_pool)
@@ -86,7 +93,10 @@ class Tournament:
             self.players_games_played[self.player_pool.index(player)] += 1
 
         result = Diamant(players).play_game()
-        self.results.append(result)
+        #self.results.append(result)
+
+        self.db_save(result)
+
         winners = result["winner"]
         if type(winners) is not list:
             winners = [winners]
@@ -508,4 +518,5 @@ def gen_player_from_name(name):
 
 
 if __name__ == '__main__':
-    diamant = Diamant([relic_gen(p) for p in numpy.linspace(0.2, 1, num=8)])
+    #diamant = Diamant([relic_gen(p) for p in numpy.linspace(0.2, 1, num=8)])
+    t = Tournament("test", [gems_gen(i) for i in numpy.linspace(1, 60, num=60)])
