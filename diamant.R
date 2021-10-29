@@ -5,7 +5,7 @@ library(DBI)
 library("tidyverse")
 library("RSQLite")
 
-db <- "C:/projects/diamant/tournaments/mp_test.db"
+db <- "C:/projects/diamant/tournaments/mp_test20.db"
 con <- dbConnect(SQLite(), db)
 
 players_db <- tbl(con, "players")
@@ -13,7 +13,6 @@ games_players_db <- tbl(con, "games_players")
 
 players <- players_db %>% collect()
 games_players <- games_players_db %>% collect() %>% filter(game_id != 1) %>% arrange(game_id, player_id)
-
 
 
 #input <- input %>% group_by(game_num) %>% mutate(
@@ -83,7 +82,7 @@ for (player in players$id) {
 matrix_wider <- pivot_wider(matrix_long, names_from = "win", 
                             values_from = "n", names_prefix = "win_") %>% 
   rename(won = win_1, lost = win_0)
-# Would be nive to know results for both sides, let's fix that
+# Would be nice to know results for both sides, let's fix that
 matrix_wider <- left_join(matrix_wider, matrix_wider %>% 
                             rename(o_id = player_id, 
                                    p_id = oponent_id, 
@@ -99,10 +98,33 @@ matrix_wider <- matrix_wider %>% mutate(
   rowwise() %>% 
   mutate(
     p_val = chisq.test(matrix(c(won, won_against, lost, lost_against), ncol=2))$p.value,
+    stat = chisq.test(matrix(c(won, won_against, lost, lost_against), ncol=2))$statistic,
     sig_better = better && p_val < 2.87e-7 # 5-sigma
+  ) %>% mutate(
+    stat = if_else(better, stat, stat*-1)
   )
 
-# We can look at the players which significantly (5-sigma) outperform others'
+corr <- matrix_wider %>% 
+  left_join(players, by=c("player_id"="id")) %>% 
+  transmute(
+    row = name,
+    player_id = oponent_id,
+    cor = stat,
+    p = p_val
+  ) %>% left_join(players, by=c("player_id"="id")) %>% 
+  transmute(row, column = name, cor, p)
+
+corr$cor = rescale(corr$cor, c(-1, 1))
+
+corr_r = select(corr, -p) %>% pivot_wider(names_from=column, values_from=cor) %>% column_to_rownames("row") %>% replace(is.na(.), 0)
+corr_p = select(corr, -cor) %>% pivot_wider(names_from=column, values_from=p) %>% column_to_rownames("row") %>% replace(is.na(.), 1)
+
+ # We can look at the players which significantly (5-sigma) outperform others'
 sig_test <- matrix_wider %>% count(player_id, sig_better) %>% filter(sig_better) %>% arrange(desc(n))
 
-# We should be able to plot a contingency matrix
+# We should be able to plot this
+library(corrplot)
+library(scales)
+corrplot(as.matrix(corr_r), p.mat = as.matrix(corr_p),
+         tl.col = "black", tl.srt = 45, sig.level = 2.87e-7)
+M

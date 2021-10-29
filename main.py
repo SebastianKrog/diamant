@@ -9,7 +9,21 @@ from TournamentDB import TournamentDB
 from multiprocessing import Pool
 
 
-def multiprocess_tournament(name, player_names, player_n, directory, game_ids):
+def mp_tournament(name, player_names, player_n, games_per_pool=100000, processes=6, directory="tournaments/"):
+    with Pool(processes) as pool:
+        #multiple_results = [pool.apply_async(multiprocess_tournament, ("mp_test", player_names, 8, "tournaments/", range(games_per_pool*i, games_per_pool*(i+1)))) for i in range(4)]
+        multiple_res = []
+        for i in range(12):
+            res = pool.apply_async(_multiprocess_tournament, (name, player_names, player_n, range(1+games_per_pool*i, 1+games_per_pool*(i+1)), directory))
+            multiple_res.append(res)
+
+        pool.close()
+        pool.join()
+        print([res.get() for res in multiple_res])
+    return multiple_res
+
+
+def _multiprocess_tournament(name, player_names, player_n, game_ids, directory="tournaments/"):
     players = [gen_player_from_name(name) for name in player_names]
     t = Tournament(name=name, player_pool=players, player_n=player_n, directory=directory)
     t.hold_tournament(n=game_ids, supply_game_id=True)
@@ -557,20 +571,9 @@ def async_test(i):
 
 if __name__ == '__main__':
     #diamant = Diamant([relic_gen(p) for p in numpy.linspace(0.2, 1, num=8)])
+    pf, player_ns = zip(*[gems_gen(i) for i in numpy.linspace(1, 20, num=20)])
 
-    with Pool(6) as pool:
-        pf, player_ns = zip(*[gems_gen(i) for i in numpy.linspace(1, 60, num=60)])
-        games_per_pool = 100000
-
-        #multiple_results = [pool.apply_async(multiprocess_tournament, ("mp_test", player_names, 8, "tournaments/", range(games_per_pool*i, games_per_pool*(i+1)))) for i in range(4)]
-        multiple_res = []
-        for i in range(12):
-            res = pool.apply_async(multiprocess_tournament, ("mp_test", player_ns, 8, "tournaments/", range(1+games_per_pool*i, 1+games_per_pool*(i+1))))
-            multiple_res.append(res)
-
-        pool.close()
-        pool.join()
-        print([res.get() for res in multiple_res])
+    mp_tournament("mp_test20", player_ns, 8, games_per_pool=10000, processes=6, directory="tournaments/")
 
 # Plan:
 # Create a tournament structure where algorithms battle:
